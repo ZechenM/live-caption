@@ -139,7 +139,8 @@ class ChunkAssembler:
         self._rms_hist.append(rms)
         # 阈值 = max(固定下限, 背景底噪的1.8倍): BGM 稳定时人声一停就能测出
         thr = max(self.energy_threshold, self._noise_floor() * 1.8)
-        is_voice = rms >= thr
+        # 底噪统计收敛前(前0.5s)不判定人声, 避免把 BGM 当语音
+        is_voice = rms >= thr and len(self._rms_hist) >= 5
 
         if not self._has_voice:
             if not is_voice:
