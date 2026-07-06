@@ -6,6 +6,7 @@ Ollama/llama.cpp 会对与上一次请求相同的前缀复用 KV cache,
 """
 
 import json
+import re
 
 import requests
 
@@ -16,8 +17,14 @@ SYSTEM_PROMPT = (
     "2) 口语化、自然,符合字幕习惯;"
     "3) 结合前文语境理解,遇到明显的识别错误按最合理的原意翻译;"
     "4) 人名、专有名词与前文译法保持一致;"
-    "5) 语气词(ね、よ、さ等)不必逐字译出。"
+    "5) 语气词(ね、よ、さ等)不必逐字译出;"
+    "6) 即使原文含糊、缺上下文或像是半句话, 也直接给出最可能的译文本身,"
+    "绝对不要解释、分析、提问或讨论翻译选项。你的输出会被直接当作字幕显示。"
 )
+
+# 模型"思考外泄"的特征词; 命中且文本异常长时触发提取
+_META_MARKERS = ("可以翻译为", "翻译为“", "最终答案", "请提供更多", "如果需要",
+                 "根据你的", "更符合", "语境", "直译", "意译", "这句话的意思")
 
 
 class OllamaTranslator:
@@ -115,9 +122,25 @@ class OllamaTranslator:
             self.on_status(f"翻译失败: {e}")
             return None
 
+        zh = self._strip_meta(ja_text, zh)
         if zh:
             self.history.append((ja_text, zh))
             # 超过 3 倍上限才裁剪: 平时前缀不变, KV cache 全命中
             if len(self.history) > self.context_pairs * 3:
                 self.history = self.history[-self.context_pairs:]
         return zh or None
+
+    @staticmethod
+    def _strip_meta(ja, zh):
+        """模型偶尔会输出翻译分析而非译文; 检测并提取真正的译文。"""
+        if not zh:
+            return zh
+        suspicious = (any(m in zh for m in _META_MARKERS)
+                      and len(zh) > max(24, len(ja) * 2))
+        if not suspicious:
+            return zh
+        # 优先取最后一段引号内的内容(模型通常把最终译文放引号里)
+        quoted = re.findall(r'[“"「]([^”"」]{2,})[”"」]', zh)
+        if quoted:
+            return quoted[-1].strip()
+        return zh.splitlines()[0].strip()
