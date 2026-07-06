@@ -1,6 +1,8 @@
 # Live Caption:macOS 实时日语 → 中文字幕
 
-链路:BlackHole 捕获系统音频 → faster-whisper 本地日语识别 → Ollama(qwen2.5:7b)翻译 → 屏幕悬浮字幕。全程本地运行,目标延迟 2–4 秒。
+链路:BlackHole 捕获系统音频 → whisper large-v3-turbo(MLX GPU 加速)日语识别 → Ollama(qwen2.5:14b)流式翻译 → 屏幕悬浮字幕。全程本地运行,说完一句约 1 秒出字幕。
+
+分段采用自适应底噪检测(对背景音乐免疫),翻译带上下文且流式上屏(灰色=翻译中,白色=定稿)。字幕窗口支持拖动、边缘调大小、滚轮翻看历史。
 
 ## 一、首次配置
 
@@ -16,7 +18,7 @@ brew install blackhole-2ch switchaudio-osx
 
 ```bash
 brew install ollama          # 或从 ollama.com 下载 App
-ollama pull qwen2.5:7b       # 约 4.7GB
+ollama pull qwen2.5:14b      # 约 9GB; 内存紧张可用 qwen2.5:7b (改 config.yaml)
 ```
 
 运行时保持 Ollama 在后台(`ollama serve` 或打开 Ollama App)。
@@ -30,7 +32,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-首次启动时 faster-whisper 会自动下载 medium 模型(约 1.5GB),需要几分钟。
+首次启动时会自动下载 whisper large-v3-turbo 的 MLX 权重(约 1.6GB),需要几分钟。识别引擎优先用 MLX(Apple Silicon GPU,快 5-10 倍),未安装 mlx-whisper 时自动回退到 faster-whisper(CPU);启动日志的 `>>> 识别引擎:` 一行会显示实际用的是哪个。
 
 ### 4. 创建 Multi-Output Device(关键步骤)
 
@@ -81,7 +83,9 @@ python main.py           # 启动字幕
 
 其他命令:`./setup_audio.sh list` 列出输出设备名;`python main.py --check` 只做环境自检(BlackHole、系统输出、Ollama)。
 
-字幕窗口:**左键拖动**位置,**右键退出**。字号、透明度、是否显示日语原文、延迟分段参数都在 `config.yaml` 里调。
+字幕窗口:**左键拖动**移动;**边缘/角落拖动**调大小;**滚轮/触控板**翻看历史字幕(滚到底自动跟随新字幕);**右键退出**。灰色文字是流式翻译中的内容,白色是定稿。字号、透明度、是否显示日语原文、历史条数、分段参数都在 `config.yaml` 里调。
+
+项目用 git 管理,`stable-v1` 标签是一个已验证的稳定版本,出问题可 `git checkout stable-v1 -- .` 回滚。
 
 ## 三、故障排除
 
@@ -89,10 +93,12 @@ python main.py           # 启动字幕
 
 **AirPods 中途断连**:音频流会自动断开重连(每 2 秒重试),程序不会崩溃。注意:AirPods 断开后 macOS 可能把输出切回扬声器,重新连上耳机后请再跑一次 `./setup_audio.sh on`(旧的 Multi-Output 设备若含已消失的 AirPods 会静音)。
 
-**Ollama 连不上**:提示 `无法连接 Ollama` 时,先 `ollama serve` 或打开 Ollama App;提示缺模型则 `ollama pull qwen2.5:7b`。
+**Ollama 连不上**:提示 `无法连接 Ollama` 时,先 `ollama serve` 或打开 Ollama App;提示缺模型则 `ollama pull qwen2.5:14b`(或改 config 用已有模型)。
 
-**延迟太大 / 机器卡**:`config.yaml` 里把 `asr.model` 改为 `small`(速度约快 2–3 倍,精度略降),或调小 `max_chunk_sec`。M1/M2 8GB 内存建议 small + qwen2.5:3b。
+**延迟太大 / 机器卡**:确认识别引擎是 MLX(见启动日志);翻译慢就换 `qwen2.5:7b`。终端每句都打 `[计时]`,识别和翻译谁慢一目了然。
+
+**断句太碎 / 半句半句出**:调大 `asr.min_chunk_sec`(如 4.0)和 `silence_sec`(如 0.7)。反之句子总撞 5s 上限则调小 `silence_sec`。
 
 **麦克风权限**:首次运行时 macOS 会向你的终端(Terminal/iTerm)申请"麦克风"权限(BlackHole 算输入设备),必须允许,否则读到的全是静音。
 
-**误识别背景音乐/噪音**:调高 `config.yaml` 里 `asr.energy_threshold`(如 0.008)。
+**翻译输出了解释/分析而不是译文**:程序会自动检测并提取真正的译文;若仍偶发,说明该句触发了模型的"讨论欲",通常下一句就恢复。
