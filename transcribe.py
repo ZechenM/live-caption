@@ -36,14 +36,15 @@ def looks_garbage(text):
 class ChunkAssembler:
     """把连续音频帧组装成"一句话"级别的片段,做准实时分段。
 
-    策略:能量检测语音起点;满足以下任一条件即切出片段:
-      - 已有语音 >= min_chunk_sec 且尾部静音 >= silence_sec(说完一句)
+    首选 Silero VAD 检测人声(对背景音乐免疫, faster-whisper 自带);
+    不可用时回退到能量阈值检测。切分条件(任一满足):
+      - 语音 >= min_chunk_sec 且人声停顿 >= silence_sec(说完一句)
+      - 有短语音且停顿超过 0.8s(短句也及时出)
       - 缓冲达到 max_chunk_sec(强制切分,保证延迟上限)
-    纯静音缓冲会被丢弃。
     """
 
     def __init__(self, samplerate=16000, min_chunk_sec=2.0, max_chunk_sec=5.0,
-                 silence_sec=0.5, energy_threshold=0.004):
+                 silence_sec=0.5, energy_threshold=0.004, use_vad=True):
         self.sr = samplerate
         self.min_len = int(min_chunk_sec * samplerate)
         self.max_len = int(max_chunk_sec * samplerate)
@@ -53,11 +54,90 @@ class ChunkAssembler:
         self._buf_len = 0
         self._has_voice = False
         self._trailing_silence = 0
+        self._since_check = 0
+        from collections import deque
+        self._rms_hist = deque(maxlen=80)   # 最近8s的帧RMS, 用于自适应底噪
+        self._vad_get = None
+        if use_vad:
+            try:
+                from faster_whisper.vad import (VadOptions,
+                                                get_speech_timestamps)
+                self._vad_get = get_speech_timestamps
+                self._vad_opts = VadOptions(
+                    min_silence_duration_ms=160,
+                    min_speech_duration_ms=100,
+                    speech_pad_ms=120)
+            except Exception:
+                pass   # 回退到能量检测
+
+    @property
+    def vad_enabled(self):
+        return self._vad_get is not None
 
     def feed(self, frame):
         """喂入一帧;若切分出片段则返回 np.ndarray,否则返回 None。"""
+        if self._vad_get is not None:
+            return self._feed_vad(frame)
+        return self._feed_energy(frame)
+
+    # ---------- VAD 分段 (对 BGM 免疫) ----------
+
+    def _feed_vad(self, frame):
+        self._buf.append(frame)
+        self._buf_len += len(frame)
+        self._since_check += 1
+        # 每 ~0.3s 或缓冲到上限时检查一次 (Silero 很快, 但没必要每帧跑)
+        if self._since_check < 3 and self._buf_len < self.max_len:
+            return None
+        self._since_check = 0
+        if self._buf_len < int(0.6 * self.sr):
+            return None
+
+        audio = np.concatenate(self._buf)
+        ts = self._vad_get(audio, self._vad_opts)
+        if not ts:
+            # 全是 BGM/静音: 只保留最近 0.5s, 防止缓冲无限增长
+            if self._buf_len > self.sr:
+                keep = audio[-int(0.5 * self.sr):]
+                self._buf = [keep]
+                self._buf_len = len(keep)
+            return None
+
+        first_start = ts[0]["start"]
+        last_end = ts[-1]["end"]
+        speech_dur = last_end - first_start
+        trailing = len(audio) - last_end
+
+        end_utt = (speech_dur >= self.min_len
+                   and trailing >= self.silence_len)
+        short_utt = (speech_dur >= int(0.3 * self.sr)
+                     and trailing >= int(0.8 * self.sr))
+        forced = len(audio) >= self.max_len
+        if not (end_utt or short_utt or forced):
+            return None
+
+        pad = int(0.15 * self.sr)
+        s = max(0, first_start - pad)
+        e = len(audio) if forced else min(len(audio), last_end + pad)
+        chunk = audio[s:e]
+        self._buf = []
+        self._buf_len = 0
+        return chunk
+
+    # ---------- 能量分段 (自适应噪声地板) ----------
+
+    def _noise_floor(self):
+        """最近约8s音量的20分位数 ≈ 背景(BGM/底噪)的稳定水平。"""
+        if len(self._rms_hist) < 20:
+            return 0.0
+        return float(np.percentile(self._rms_hist, 20))
+
+    def _feed_energy(self, frame):
         rms = float(np.sqrt(np.mean(frame ** 2))) if len(frame) else 0.0
-        is_voice = rms >= self.energy_threshold
+        self._rms_hist.append(rms)
+        # 阈值 = max(固定下限, 背景底噪的1.8倍): BGM 稳定时人声一停就能测出
+        thr = max(self.energy_threshold, self._noise_floor() * 1.8)
+        is_voice = rms >= thr
 
         if not self._has_voice:
             if not is_voice:
@@ -85,7 +165,9 @@ class ChunkAssembler:
 
     def peek(self, min_sec=1.0):
         """返回当前未切分的语音缓冲(用于流式草稿识别); 不足则返回 None。"""
-        if not self._has_voice or self._buf_len < int(min_sec * self.sr):
+        if self._buf_len < int(min_sec * self.sr):
+            return None
+        if self._vad_get is None and not self._has_voice:
             return None
         return np.concatenate(self._buf)
 

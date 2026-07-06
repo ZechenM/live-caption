@@ -14,8 +14,9 @@ asr:
   beam_size: 5                     # 准确优先; 嫌慢降到 2
   min_chunk_sec: 2.0               # 分段最短时长(影响延迟下限)
   max_chunk_sec: 5.0               # 强制切分上限; 更长的段=更完整的句子=更准
-  silence_sec: 0.35                # 判定"说完一句"的静音时长
-  energy_threshold: 0.004          # 能量阈值,环境噪音大可调高
+  silence_sec: 0.35                # 判定"说完一句"的人声停顿时长
+  vad_segmentation: false          # Silero VAD 分段(实验性, 对动画音效误判较多)
+  energy_threshold: 0.004          # 能量阈值下限(实际阈值随背景底噪自适应上浮)
   carry_context: true              # 把上一句识别结果作为提示传给下一句(提升连贯性)
   cpu_threads: 0                   # whisper 推理线程数; 0=自动(核数-2)
   draft_interval_sec: 0            # 说话中途的草稿识别; 默认关闭(对半句音频易产生重复幻觉)

@@ -103,7 +103,10 @@ def asr_worker(cfg, capture, ja_queue, preview_queue, status, stop):
                               a.get("backend", "auto"), on_status=status)
     assembler = ChunkAssembler(cfg["audio"]["samplerate"],
                                a["min_chunk_sec"], a["max_chunk_sec"],
-                               a["silence_sec"], a["energy_threshold"])
+                               a["silence_sec"], a["energy_threshold"],
+                               use_vad=a.get("vad_segmentation", True))
+    status("分段方式: " + ("Silero VAD (实验性)" if assembler.vad_enabled
+                          else "自适应能量阈值 (随背景底噪自动上浮)"))
     status("开始监听音频…")
     # 流式草稿: 说话过程中每 draft_interval 秒对未完成的缓冲识别一次
     # (仅 MLX 后端开启, CPU 后端跑不动双份识别)
