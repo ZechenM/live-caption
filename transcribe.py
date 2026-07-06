@@ -57,6 +57,8 @@ class ChunkAssembler:
         self._since_check = 0
         from collections import deque
         self._rms_hist = deque(maxlen=80)   # 最近8s的帧RMS, 用于自适应底噪
+        self._voiced_len = 0                # 当前缓冲中的人声样本数
+        self._last_voiced = 0
         self._vad_get = None
         if use_vad:
             try:
@@ -128,7 +130,7 @@ class ChunkAssembler:
 
     def _noise_floor(self):
         """最近约8s音量的20分位数 ≈ 背景(BGM/底噪)的稳定水平。"""
-        if len(self._rms_hist) < 20:
+        if len(self._rms_hist) < 5:
             return 0.0
         return float(np.percentile(self._rms_hist, 20))
 
@@ -146,21 +148,29 @@ class ChunkAssembler:
 
         self._buf.append(frame)
         self._buf_len += len(frame)
+        if is_voice:
+            self._voiced_len += len(frame)
         self._trailing_silence = 0 if is_voice else \
             self._trailing_silence + len(frame)
 
         end_of_utterance = (self._buf_len >= self.min_len
                             and self._trailing_silence >= self.silence_len)
         if end_of_utterance or self._buf_len >= self.max_len:
-            return self._flush()
+            chunk = self._flush()
+            # 真实人声太少(底噪统计收敛前的误判)→ 丢弃
+            if self._last_voiced < int(0.3 * self.sr):
+                return None
+            return chunk
         return None
 
     def _flush(self):
         chunk = np.concatenate(self._buf)
+        self._last_voiced = self._voiced_len
         self._buf = []
         self._buf_len = 0
         self._has_voice = False
         self._trailing_silence = 0
+        self._voiced_len = 0
         return chunk
 
     def peek(self, min_sec=1.0):
