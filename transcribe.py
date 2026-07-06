@@ -141,8 +141,9 @@ class ChunkAssembler:
     def _feed_energy(self, frame):
         rms = float(np.sqrt(np.mean(frame ** 2))) if len(frame) else 0.0
         self._rms_hist.append(rms)
-        # 阈值 = max(固定下限, 背景底噪的1.8倍): BGM 稳定时人声一停就能测出
-        thr = max(self.energy_threshold, self._noise_floor() * 1.8)
+        # 阈值 = max(固定下限, 背景底噪的2.2倍): BGM 稳定时人声一停就能测出;
+        # 倍率偏高一些, 说话声音变轻时不至于被误判成停顿
+        thr = max(self.energy_threshold, self._noise_floor() * 2.2)
         # 底噪统计收敛前(前0.5s)不判定人声, 避免把 BGM 当语音
         is_voice = rms >= thr and len(self._rms_hist) >= 5
 
