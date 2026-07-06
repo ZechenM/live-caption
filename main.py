@@ -93,11 +93,14 @@ def check_environment(cfg, verbose=True):
 
 # ---------------- 流水线线程 ----------------
 
-def seg_worker(cfg, capture, chunk_queue, status, stop):
-    """分段线程: 只做音频帧组装和切分, 永不被识别耗时阻塞。"""
+def asr_worker(cfg, capture, ja_queue, preview_queue, status, stop):
     import time
-    from transcribe import ChunkAssembler
+    from transcribe import ChunkAssembler, Transcriber, is_hallucination
     a = cfg["asr"]
+    transcriber = Transcriber(a["model"], a["language"], a["compute_type"],
+                              a["beam_size"], a.get("carry_context", True),
+                              a.get("cpu_threads", 0),
+                              a.get("backend", "auto"), on_status=status)
     assembler = ChunkAssembler(cfg["audio"]["samplerate"],
                                a["min_chunk_sec"], a["max_chunk_sec"],
                                a["silence_sec"], a["energy_threshold"],
@@ -105,58 +108,40 @@ def seg_worker(cfg, capture, chunk_queue, status, stop):
     status("分段方式: " + ("Silero VAD (实验性)" if assembler.vad_enabled
                           else "自适应能量阈值 (随背景底噪自动上浮)"))
     status("开始监听音频…")
-    draft_iv = a.get("draft_interval_sec", 0)
+    # 流式草稿: 说话过程中每 draft_interval 秒对未完成的缓冲识别一次
+    # (仅 MLX 后端开启, CPU 后端跑不动双份识别)
+    draft_iv = a.get("draft_interval_sec", 1.0)
+    do_draft = draft_iv > 0 and transcriber.backend == "mlx"
     last_draft = 0.0
     while not stop.is_set():
         frame = capture.read(timeout=0.5)
         if frame is None:
             continue
         chunk = assembler.feed(frame)
-        if chunk is not None:
-            chunk_queue.put(("final", chunk))
-        elif draft_iv > 0:
-            now = time.monotonic()
-            if now - last_draft >= draft_iv:
-                buf = assembler.peek(min_sec=1.0)
+        if chunk is None:
+            if do_draft:
+                now = time.monotonic()
+                buf = (assembler.peek(min_sec=1.0)
+                       if now - last_draft >= draft_iv else None)
                 if buf is not None:
                     last_draft = now
-                    chunk_queue.put(("draft", buf))
-
-
-def asr_worker(cfg, chunk_queue, ja_queue, preview_queue, status, stop):
-    """识别线程: 从片段队列取音频跑 whisper, 与分段完全解耦。"""
-    import time
-    from transcribe import Transcriber, is_hallucination
-    a = cfg["asr"]
-    transcriber = Transcriber(a["model"], a["language"], a["compute_type"],
-                              a["beam_size"], a.get("carry_context", True),
-                              a.get("cpu_threads", 0),
-                              a.get("backend", "auto"), on_status=status)
-    while not stop.is_set():
-        try:
-            kind, audio = chunk_queue.get(timeout=0.5)
-        except queue.Empty:
-            continue
-        if kind == "draft":
-            # 草稿只在 MLX 后端跑; 队列里有更新的条目时跳过过期草稿
-            if transcriber.backend != "mlx" or not chunk_queue.empty():
-                continue
-            try:
-                draft = transcriber.transcribe(audio, is_final=False)
-            except Exception:
-                draft = ""
-            if draft and not is_hallucination(draft):
-                preview_queue.put(draft)
+                    try:
+                        draft = transcriber.transcribe(buf, is_final=False)
+                    except Exception:
+                        draft = ""
+                    from transcribe import is_hallucination as _ih
+                    if draft and not _ih(draft):
+                        preview_queue.put(draft)
             continue
         t0 = time.monotonic()
         try:
-            text = transcriber.transcribe(audio)
+            text = transcriber.transcribe(chunk)
         except Exception as e:
             status(f"识别出错: {e}")
             continue
         asr_ms = (time.monotonic() - t0) * 1000
         if text and not is_hallucination(text):
-            print(f"[计时] 音频{len(audio)/16000:.1f}s 识别{asr_ms:.0f}ms | {text}")
+            print(f"[计时] 音频{len(chunk)/16000:.1f}s 识别{asr_ms:.0f}ms | {text}")
             preview_queue.put(text)       # 立即预览日语原文, 降低体感延迟
             ja_queue.put(text)
 
@@ -216,7 +201,6 @@ def main():
 
     stop = threading.Event()
     status_queue = queue.Queue()
-    chunk_queue = queue.Queue()
     ja_queue = queue.Queue()
     sub_queue = queue.Queue()
     preview_queue = queue.Queue()
@@ -230,10 +214,8 @@ def main():
                            au["blocksize"], au["retry_interval"],
                            on_status=status)
     capture.start()
-    threading.Thread(target=seg_worker, daemon=True, name="seg",
-                     args=(cfg, capture, chunk_queue, status, stop)).start()
     threading.Thread(target=asr_worker, daemon=True, name="asr",
-                     args=(cfg, chunk_queue, ja_queue, preview_queue,
+                     args=(cfg, capture, ja_queue, preview_queue,
                            status, stop)).start()
     threading.Thread(target=translate_worker, daemon=True, name="translate",
                      args=(cfg, ja_queue, sub_queue, status, stop)).start()
