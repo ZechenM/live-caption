@@ -1,7 +1,11 @@
-"""翻译:调用本地 Ollama 做日→中翻译,带近句上下文,流式输出。"""
+"""翻译:调用本地 Ollama 做日→中翻译,带近句上下文,流式输出。
+
+历史采用"追加为主、偶尔裁剪"的策略而不是滑动窗口:
+Ollama/llama.cpp 会对与上一次请求相同的前缀复用 KV cache,
+前缀稳定 => 每句只需预填充新增的几十个 token, 首字延迟大幅下降。
+"""
 
 import json
-from collections import deque
 
 import requests
 
@@ -24,7 +28,8 @@ class OllamaTranslator:
         self.timeout = timeout
         self.temperature = temperature
         self.on_status = on_status or (lambda msg: print(f"[translate] {msg}"))
-        self.history = deque(maxlen=context_pairs)  # [(ja, zh), ...]
+        self.context_pairs = context_pairs
+        self.history = []            # [(ja, zh), ...] 追加为主, 超限才裁剪
 
     # ---------- 可用性检查 ----------
 
@@ -47,11 +52,17 @@ class OllamaTranslator:
         return True, f"Ollama 正常,模型 {self.model} 可用。"
 
     def warmup(self):
-        """预加载模型并设置 keep_alive, 避免首句翻译时才加载模型(慢十几秒)。"""
+        """预加载模型 + 预填充 system prompt 的 KV cache。"""
         try:
-            requests.post(f"{self.base_url}/api/generate",
-                          json={"model": self.model, "prompt": "",
-                                "keep_alive": "60m"},
+            requests.post(f"{self.base_url}/api/chat",
+                          json={"model": self.model,
+                                "messages": [
+                                    {"role": "system", "content": SYSTEM_PROMPT},
+                                    {"role": "user", "content": "はい"}],
+                                "stream": False,
+                                "keep_alive": "60m",
+                                "options": {"num_predict": 4,
+                                            "num_ctx": 4096}},
                           timeout=120)
             self.on_status("翻译模型已预加载。")
         except Exception as e:
@@ -81,7 +92,8 @@ class OllamaTranslator:
                     "stream": True,
                     "keep_alive": "60m",
                     "options": {"temperature": self.temperature,
-                                "num_predict": 256},
+                                "num_predict": 256,
+                                "num_ctx": 4096},
                 },
                 stream=True,
                 timeout=self.timeout,
@@ -105,4 +117,7 @@ class OllamaTranslator:
 
         if zh:
             self.history.append((ja_text, zh))
+            # 超过 3 倍上限才裁剪: 平时前缀不变, KV cache 全命中
+            if len(self.history) > self.context_pairs * 3:
+                self.history = self.history[-self.context_pairs:]
         return zh or None
