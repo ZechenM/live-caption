@@ -129,10 +129,14 @@ class ChunkAssembler:
     # ---------- 能量分段 (自适应噪声地板) ----------
 
     def _noise_floor(self):
-        """最近约8s音量的20分位数 ≈ 背景(BGM/底噪)的稳定水平。"""
+        """最近约8s音量的10分位数 ≈ 背景(BGM/底噪)的稳定水平。
+
+        用低分位数: 只要窗口里有零星的说话间隙, 就能锚定到真实底噪,
+        避免连续人声把"底噪"抬到人声水平。
+        """
         if len(self._rms_hist) < 5:
             return 0.0
-        return float(np.percentile(self._rms_hist, 20))
+        return float(np.percentile(self._rms_hist, 10))
 
     def _feed_energy(self, frame):
         rms = float(np.sqrt(np.mean(frame ** 2))) if len(frame) else 0.0
