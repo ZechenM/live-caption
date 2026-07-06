@@ -265,6 +265,9 @@ class Transcriber:
                 language=self.language,
                 initial_prompt=prompt,
                 condition_on_previous_text=False,
+                # 关闭 temperature fallback: 尖叫/音效段不再6档重试
+                # (重试耗时3-8s, 结果多为"あああ", 对实时字幕纯负资产)
+                temperature=0.0,
                 fp16=True,
                 verbose=None,
             )
@@ -279,6 +282,7 @@ class Transcriber:
                 language=self.language,
                 beam_size=self.beam_size,
                 initial_prompt=prompt,
+                temperature=0.0,          # 同样关闭 fallback 重试
                 vad_filter=True,
                 vad_parameters={"min_silence_duration_ms": 300},
                 condition_on_previous_text=False,
