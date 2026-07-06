@@ -1,0 +1,6 @@
+faster-whisper>=1.1.0
+mlx-whisper>=0.4.0 ; platform_system == "Darwin" and platform_machine == "arm64"
+sounddevice>=0.4.6
+numpy>=1.24
+requests>=2.31
+PyYAML>=6.0

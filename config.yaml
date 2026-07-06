@@ -1,0 +1,46 @@
+# 实时日语→中文字幕 配置
+
+audio:
+  device_keyword: "BlackHole"      # 输入设备名关键字
+  samplerate: 16000
+  blocksize: 1600                  # 每帧 0.1s
+  retry_interval: 2.0              # 断连重试间隔(秒)
+
+asr:
+  model: "large-v3-turbo"          # 精度接近 large-v3 (首次下载约1.6GB)
+  backend: "auto"                  # auto=优先MLX(GPU,快5-10倍) / mlx / faster-whisper
+  language: "ja"
+  compute_type: "int8"
+  beam_size: 5                     # 准确优先; 嫌慢降到 2
+  min_chunk_sec: 2.0               # 分段最短时长(影响延迟下限)
+  max_chunk_sec: 5.0               # 强制切分上限; 更长的段=更完整的句子=更准
+  silence_sec: 0.45                # 判定"说完一句"的静音时长
+  energy_threshold: 0.004          # 能量阈值,环境噪音大可调高
+  carry_context: true              # 把上一句识别结果作为提示传给下一句(提升连贯性)
+  cpu_threads: 0                   # whisper 推理线程数; 0=自动(核数-2)
+  draft_interval_sec: 0            # 说话中途的草稿识别; 默认关闭(对半句音频易产生重复幻觉)
+
+translate:
+  ollama_url: "http://localhost:11434"
+  model: "qwen2.5:14b"             # 质量优先; 嫌慢可换回 qwen2.5:7b
+  context_pairs: 6                 # 携带最近几句上下文,保证术语一致
+  timeout: 45
+  temperature: 0.1
+  merge_backlog: 3                 # 翻译不过来时, 最多合并几句一起译(防积压)
+
+overlay:
+  width: 900
+  height: 140
+  font_family: "PingFang SC"
+  font_size: 28                    # 中文字号
+  ja_font_size: 16                 # 日语原文字号
+  show_japanese: true              # 是否显示日语原文
+  opacity: 0.82                    # 窗口透明度 0~1
+  max_history: 100                 # 可回滚的历史字幕条数
+
+audio_switch:
+  multi_output_name: "Openfit-BH"   # 找不到映射时的默认设备名
+  # 自动映射: 运行 setup_audio.sh 时, 当前输出是左边的设备, 就自动切到右边的 Multi-Output
+  device_map:
+    "MacBook Pro Speakers": "MBP-BH"
+    "OpenFit SE by Shokz": "Openfit-BH"
