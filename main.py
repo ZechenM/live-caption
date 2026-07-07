@@ -19,6 +19,7 @@ from capture import AudioCapture
 from translate import OllamaTranslator
 
 CONFIG_PATH = Path(__file__).parent / "config.yaml"
+RESET_SENTINEL = "\x00RESET"   # 通知翻译线程清空上下文的哨兵
 
 
 def load_config():
@@ -113,6 +114,9 @@ def asr_worker(cfg, capture, ja_queue, preview_queue, status, stop):
     draft_iv = a.get("draft_interval_sec", 1.0)
     do_draft = draft_iv > 0 and transcriber.backend == "mlx"
     last_draft = 0.0
+    # 长时间没有语音片段 (暂停/拖进度条) 则重置上下文, 避免旧语境误导
+    reset_gap = a.get("context_reset_gap_sec", 20)
+    last_chunk_time = time.monotonic()
     while not stop.is_set():
         frame = capture.read(timeout=0.5)
         if frame is None:
@@ -133,6 +137,12 @@ def asr_worker(cfg, capture, ja_queue, preview_queue, status, stop):
                     if draft and not _ih(draft):
                         preview_queue.put(draft)
             continue
+        now = time.monotonic()
+        if reset_gap > 0 and now - last_chunk_time > reset_gap:
+            transcriber.reset_context()
+            ja_queue.put(RESET_SENTINEL)
+            print(f"[上下文] 空窗 {now - last_chunk_time:.0f}s, 已重置识别/翻译上下文")
+        last_chunk_time = now
         t0 = time.monotonic()
         try:
             text = transcriber.transcribe(chunk)
@@ -159,13 +169,20 @@ def translate_worker(cfg, ja_queue, sub_queue, status, stop):
             ja = ja_queue.get(timeout=0.5)
         except queue.Empty:
             continue
+        if ja == RESET_SENTINEL:
+            translator.history.clear()
+            continue
         # 翻译跟不上时, 把积压的句子合并成一次请求, 防止延迟滚雪球
         merged = [ja]
         while len(merged) < merge_n:
             try:
-                merged.append(ja_queue.get_nowait())
+                nxt = ja_queue.get_nowait()
             except queue.Empty:
                 break
+            if nxt == RESET_SENTINEL:
+                translator.history.clear()
+                break
+            merged.append(nxt)
         ja = " ".join(merged)
         t0 = time.monotonic()
         last_emit = 0.0
@@ -212,7 +229,8 @@ def main():
     au = cfg["audio"]
     capture = AudioCapture(au["device_keyword"], au["samplerate"],
                            au["blocksize"], au["retry_interval"],
-                           on_status=status)
+                           on_status=status,
+                           highpass_hz=au.get("highpass_hz", 0))
     capture.start()
     threading.Thread(target=asr_worker, daemon=True, name="asr",
                      args=(cfg, capture, ja_queue, preview_queue,

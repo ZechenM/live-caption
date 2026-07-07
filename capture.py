@@ -16,7 +16,8 @@ class AudioCapture:
     """
 
     def __init__(self, device_keyword="BlackHole", samplerate=16000,
-                 blocksize=1600, retry_interval=2.0, on_status=None):
+                 blocksize=1600, retry_interval=2.0, on_status=None,
+                 highpass_hz=0):
         self.device_keyword = device_keyword.lower()
         self.samplerate = samplerate
         self.blocksize = blocksize
@@ -26,6 +27,18 @@ class AudioCapture:
         self._stop = threading.Event()
         self._stream_error = threading.Event()
         self._thread = None
+        # 高通滤波 (FIR, 加窗sinc): 滤掉马达/震动等低频噪音, 保留人声
+        self._hp = None
+        if highpass_hz and highpass_hz > 0:
+            n = 101
+            fc = highpass_hz / samplerate
+            m = np.arange(n) - (n - 1) / 2
+            h_lp = 2 * fc * np.sinc(2 * fc * m) * np.hamming(n)
+            h_lp /= h_lp.sum()
+            h_hp = -h_lp
+            h_hp[(n - 1) // 2] += 1.0
+            self._hp = h_hp.astype(np.float32)
+            self._hp_tail = np.zeros(n - 1, dtype=np.float32)
 
     # ---------- 设备 ----------
 
@@ -47,8 +60,13 @@ class AudioCapture:
             # 除 overflow 之外的状态多为设备异常
             self._stream_error.set()
         mono = indata.mean(axis=1) if indata.ndim > 1 else indata[:, 0]
+        mono = mono.astype(np.float32, copy=True)
+        if self._hp is not None:
+            x = np.concatenate([self._hp_tail, mono])
+            mono = np.convolve(x, self._hp, mode="valid").astype(np.float32)
+            self._hp_tail = x[-(len(self._hp) - 1):]
         try:
-            self.frames.put_nowait(mono.astype(np.float32, copy=True))
+            self.frames.put_nowait(mono)
         except queue.Full:
             pass  # 下游太慢时丢帧,保证实时性
 

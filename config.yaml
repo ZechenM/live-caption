@@ -5,6 +5,7 @@ audio:
   samplerate: 16000
   blocksize: 1600                  # 每帧 0.1s
   retry_interval: 2.0              # 断连重试间隔(秒)
+  highpass_hz: 100                 # 高通滤波: 滤掉马达/震动等低频噪音; 0=关闭
 
 asr:
   model: "large-v3-turbo"          # 精度接近 large-v3 (首次下载约1.6GB)
@@ -18,13 +19,14 @@ asr:
   vad_segmentation: false          # Silero VAD 分段(实验性, 对动画音效误判较多)
   energy_threshold: 0.004          # 能量阈值下限(实际阈值随背景底噪自适应上浮)
   carry_context: true              # 把上一句识别结果作为提示传给下一句(提升连贯性)
+  context_reset_gap_sec: 20        # 无语音超过N秒(暂停/跳播)自动重置上下文; 0=关闭
   cpu_threads: 0                   # whisper 推理线程数; 0=自动(核数-2)
   draft_interval_sec: 0            # 说话中途的草稿识别; 默认关闭(对半句音频易产生重复幻觉)
 
 translate:
   ollama_url: "http://localhost:11434"
   model: "qwen2.5:14b"             # 质量优先; 嫌慢可换回 qwen2.5:7b
-  context_pairs: 6                 # 携带最近几句上下文,保证术语一致
+  context_pairs: 4                 # 携带最近几句上下文(跳着看时旧语境拖累更小)
   timeout: 45
   temperature: 0.1
   merge_backlog: 3                 # 翻译不过来时, 最多合并几句一起译(防积压)

@@ -250,6 +250,10 @@ class Transcriber:
                         else "faster-whisper — CPU")
         self.on_status(f">>> 识别引擎: {backend_desc} | 模型: {model_size}")
 
+    def reset_context(self):
+        """清空前文提示 (跳播/长时间空窗后调用)。"""
+        self._prev_text = ""
+
     def transcribe(self, audio, is_final=True):
         """audio: 16kHz float32 单声道。返回识别文本(可能为空串)。
 
