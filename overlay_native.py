@@ -14,6 +14,7 @@
 import signal
 
 import objc
+import AppKit
 from AppKit import (NSApp, NSApplication, NSBackingStoreBuffered,
                     NSClickGestureRecognizer, NSColor, NSFont,
                     NSFontAttributeName, NSForegroundColorAttributeName,
@@ -30,8 +31,10 @@ STYLE_NONACTIVATING = 1 << 7
 BEHAVIOR_ALL_SPACES = (1 << 0) | (1 << 4) | (1 << 8)
 # CanJoinAllSpaces | Stationary | FullScreenAuxiliary
 LEVEL_OVERLAY = 101          # NSPopUpMenuWindowLevel, 高于全屏内容
-ALIGN_CENTER = 2             # NSTextAlignmentCenter (macOS)
+# 新版 macOS 统一了 NSTextAlignment: center=1 (旧版 AppKit 是 2)
+ALIGN_CENTER = getattr(AppKit, "NSTextAlignmentCenter", 1)
 MIN_W, MIN_H = 320, 80
+FOLLOW_MARGIN = 150          # 距底部多少像素内仍视为"在底部"(须大于一行字幕高)
 
 
 class _Ticker(NSObject):
@@ -174,7 +177,9 @@ class SubtitleOverlay:
     def _at_bottom(self):
         vis = self.scroll.contentView().documentVisibleRect()
         doc_h = self.tv.frame().size.height
-        return vis.origin.y + vis.size.height >= doc_h - 30
+        if doc_h <= vis.size.height:
+            return True   # 内容还没满一屏
+        return vis.origin.y + vis.size.height >= doc_h - FOLLOW_MARGIN
 
     def _render(self):
         follow = self._at_bottom()
