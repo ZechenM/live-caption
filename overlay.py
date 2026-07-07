@@ -94,6 +94,30 @@ class SubtitleOverlay:
         self._press_xy = (0, 0)
         self._press_geo = (x, y, width, height)
         self._cursors = self._probe_cursors()
+        self.root.update_idletasks()
+        self._enable_fullscreen_overlay()
+
+    def _enable_fullscreen_overlay(self):
+        """让浮窗能覆盖全屏 App (如全屏 Chrome)。
+
+        macOS 全屏应用独占 Space, 普通置顶窗口进不去。给底层 NSWindow
+        设置 CanJoinAllSpaces + FullScreenAuxiliary 后即可跟随所有 Space。
+        需要 pyobjc (pip install pyobjc-framework-Cocoa), 没装则跳过。
+        """
+        try:
+            from AppKit import NSApplication
+            behavior = (1 << 0) | (1 << 4) | (1 << 8)
+            # CanJoinAllSpaces | Stationary | FullScreenAuxiliary
+            app = NSApplication.sharedApplication()
+            for w in app.windows():
+                w.setCollectionBehavior_(behavior)
+                w.setLevel_(101)   # NSPopUpMenuWindowLevel, 高于全屏内容
+            print("[overlay] 已启用全屏覆盖 (可显示在全屏App之上)")
+        except ImportError:
+            print("[overlay] 提示: 想让字幕显示在全屏App上, 请安装:"
+                  " pip install pyobjc-framework-Cocoa")
+        except Exception as e:
+            print(f"[overlay] 全屏覆盖设置失败(不影响其他功能): {e}")
 
     def _probe_cursors(self):
         """逐方向探测当前平台支持的光标名, 挑候选表里第一个可用的。"""

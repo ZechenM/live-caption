@@ -1,5 +1,6 @@
 faster-whisper>=1.1.0
 mlx-whisper>=0.4.0 ; platform_system == "Darwin" and platform_machine == "arm64"
+pyobjc-framework-Cocoa>=9.0 ; platform_system == "Darwin"
 sounddevice>=0.4.6
 numpy>=1.24
 requests>=2.31
