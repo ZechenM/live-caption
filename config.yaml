@@ -30,6 +30,7 @@ translate:
   merge_backlog: 3                 # 翻译不过来时, 最多合并几句一起译(防积压)
 
 overlay:
+  native: true                     # 原生 NSPanel 浮窗(可覆盖全屏App); false=tkinter
   width: 900
   height: 140
   font_family: "PingFang SC"

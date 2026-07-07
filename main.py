@@ -220,8 +220,19 @@ def main():
     threading.Thread(target=translate_worker, daemon=True, name="translate",
                      args=(cfg, ja_queue, sub_queue, status, stop)).start()
 
-    # 悬浮窗必须在主线程
-    from overlay import SubtitleOverlay
+    # 悬浮窗必须在主线程; 优先原生 NSPanel (可覆盖全屏App), 失败回退 tkinter
+    def make_overlay(on_close):
+        if cfg["overlay"].get("native", True):
+            try:
+                from overlay_native import SubtitleOverlay as Native
+                ov = Native(cfg["overlay"], on_close=on_close)
+                print("悬浮窗引擎: 原生 NSPanel (支持覆盖全屏App)")
+                return ov
+            except Exception as e:
+                print(f"原生浮窗不可用({e}), 回退 tkinter。"
+                      f"如需全屏覆盖请: pip install pyobjc-framework-Cocoa")
+        from overlay import SubtitleOverlay as Tk
+        return Tk(cfg["overlay"], on_close=on_close)
 
     def poll(ov):
         updated = False
@@ -261,7 +272,7 @@ def main():
         stop.set()
         capture.stop()
 
-    overlay = SubtitleOverlay(cfg["overlay"], on_close=on_close)
+    overlay = make_overlay(on_close)
     print("字幕窗口已启动:左键拖动,右键退出。Ctrl+C 也可退出。")
     try:
         overlay.run(poll, interval_ms=100)
