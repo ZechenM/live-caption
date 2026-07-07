@@ -94,30 +94,45 @@ class SubtitleOverlay:
         self._press_xy = (0, 0)
         self._press_geo = (x, y, width, height)
         self._cursors = self._probe_cursors()
-        self.root.update_idletasks()
-        self._enable_fullscreen_overlay()
+        self._fso_announced = False
 
     def _enable_fullscreen_overlay(self):
         """让浮窗能覆盖全屏 App (如全屏 Chrome)。
 
-        macOS 全屏应用独占 Space, 普通置顶窗口进不去。给底层 NSWindow
-        设置 CanJoinAllSpaces + FullScreenAuxiliary 后即可跟随所有 Space。
+        macOS 全屏应用独占 Space, 普通置顶窗口进不去。配方:
+        1) 进程设为 accessory (辅助应用, 无 Dock 图标)
+        2) NSWindow 设 CanJoinAllSpaces + FullScreenAuxiliary
+        3) 窗口层级提到全屏内容之上
+        必须在窗口已显示后设置, 否则会被 Tk 覆盖; 定期重设以防被重置。
         需要 pyobjc (pip install pyobjc-framework-Cocoa), 没装则跳过。
         """
         try:
             from AppKit import NSApplication
+            app = NSApplication.sharedApplication()
+            app.setActivationPolicy_(1)   # NSApplicationActivationPolicyAccessory
             behavior = (1 << 0) | (1 << 4) | (1 << 8)
             # CanJoinAllSpaces | Stationary | FullScreenAuxiliary
-            app = NSApplication.sharedApplication()
+            done = False
             for w in app.windows():
+                if not w.isVisible():
+                    continue
                 w.setCollectionBehavior_(behavior)
                 w.setLevel_(101)   # NSPopUpMenuWindowLevel, 高于全屏内容
-            print("[overlay] 已启用全屏覆盖 (可显示在全屏App之上)")
+                w.setHidesOnDeactivate_(False)
+                done = True
+            if done and not self._fso_announced:
+                self._fso_announced = True
+                print("[overlay] 已启用全屏覆盖: 窗口会出现在所有 Space"
+                      " (包括全屏App), 无需拖拽。")
         except ImportError:
-            print("[overlay] 提示: 想让字幕显示在全屏App上, 请安装:"
-                  " pip install pyobjc-framework-Cocoa")
+            if not self._fso_announced:
+                self._fso_announced = True
+                print("[overlay] 提示: 想让字幕显示在全屏App上, 请安装:"
+                      " pip install pyobjc-framework-Cocoa")
         except Exception as e:
-            print(f"[overlay] 全屏覆盖设置失败(不影响其他功能): {e}")
+            if not self._fso_announced:
+                self._fso_announced = True
+                print(f"[overlay] 全屏覆盖设置失败(不影响其他功能): {e}")
 
     def _probe_cursors(self):
         """逐方向探测当前平台支持的光标名, 挑候选表里第一个可用的。"""
@@ -282,5 +297,11 @@ class SubtitleOverlay:
                 print(f"[overlay] poll error: {e}")
             self.root.after(interval_ms, tick)
 
+        def assert_fso(repeat_ms=3000):
+            # 窗口映射后再设 NSWindow 属性, 并每3s重设一次防止被 Tk 重置
+            self._enable_fullscreen_overlay()
+            self.root.after(repeat_ms, assert_fso)
+
         self.root.after(interval_ms, tick)
+        self.root.after(300, assert_fso)
         self.root.mainloop()
