@@ -38,7 +38,7 @@ overlay:
   ja_font_size: 16                 # 日语原文字号
   show_japanese: true              # 是否显示日语原文
   opacity: 0.82                    # 窗口透明度 0~1
-  max_history: 100                 # 可回滚的历史字幕条数
+  max_history: 10                  # 可回滚的历史字幕条数(过大会随时间拖慢渲染)
 
 audio_switch:
   multi_output_name: "Openfit-BH"   # 找不到映射时的默认设备名

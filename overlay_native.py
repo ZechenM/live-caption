@@ -77,7 +77,7 @@ class SubtitleOverlay:
         zh_size = cfg.get("font_size", 28)
         ja_size = cfg.get("ja_font_size", 16)
         self.show_ja = cfg.get("show_japanese", True)
-        self.max_history = cfg.get("max_history", 100)
+        self.max_history = cfg.get("max_history", 10)
 
         self._finals = []            # 定稿行
         self._partial = None         # 流式更新中的行

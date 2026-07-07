@@ -129,8 +129,9 @@ class OllamaTranslator:
         zh = self._strip_meta(ja_text, zh)
         if zh:
             self.history.append((ja_text, zh))
-            # 超过 3 倍上限才裁剪: 平时前缀不变, KV cache 全命中
-            if len(self.history) > self.context_pairs * 3:
+            # 超过 2 倍上限才裁剪: 平时前缀不变, KV cache 命中;
+            # 上限压低一些, 长时间运行时 prompt 不会越攒越长
+            if len(self.history) > self.context_pairs * 2:
                 self.history = self.history[-self.context_pairs:]
         return zh or None
 

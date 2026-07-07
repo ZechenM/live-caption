@@ -39,7 +39,7 @@ class SubtitleOverlay:
         zh_size = cfg.get("font_size", 28)
         ja_size = cfg.get("ja_font_size", 16)
         self.show_ja = cfg.get("show_japanese", True)
-        self.max_history = cfg.get("max_history", 100)
+        self.max_history = cfg.get("max_history", 10)
 
         self._count = 0          # 已完成的字幕行数
         self._status_shown = False
