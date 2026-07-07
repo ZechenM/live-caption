@@ -275,11 +275,13 @@ class Transcriber:
                 fp16=True,
                 verbose=None,
             )
-            # 过滤"无语音"概率过高、压缩比异常(重复循环)的段
+            # 过滤"无语音"概率过高、压缩比异常(重复循环)、
+            # 置信度过低(脚步声/音效上的幻觉)的段
             text = "".join(
                 seg["text"] for seg in result.get("segments", [])
                 if seg.get("no_speech_prob", 0.0) < 0.66
-                and seg.get("compression_ratio", 1.0) < 2.6).strip()
+                and seg.get("compression_ratio", 1.0) < 2.6
+                and seg.get("avg_logprob", 0.0) > -1.2).strip()
         else:
             segments, _info = self.model.transcribe(
                 audio,

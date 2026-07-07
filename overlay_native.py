@@ -128,6 +128,7 @@ class SubtitleOverlay:
         self.scroll.setAutoresizingMask_(2 | 16)        # 宽高都可变
         self.scroll.setHasVerticalScroller_(True)
         self.scroll.setScrollerStyle_(1)                # overlay 式滚动条
+        self.scroll.setAutohidesScrollers_(True)        # 平时隐藏, 滚动时出现
         self.scroll.setDrawsBackground_(False)
 
         inner = self.scroll.contentView().bounds()

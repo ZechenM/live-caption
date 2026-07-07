@@ -117,6 +117,7 @@ def asr_worker(cfg, capture, ja_queue, preview_queue, status, stop):
     # 长时间没有语音片段 (暂停/拖进度条) 则重置上下文, 避免旧语境误导
     reset_gap = a.get("context_reset_gap_sec", 20)
     last_chunk_time = time.monotonic()
+    last_text = None
     while not stop.is_set():
         frame = capture.read(timeout=0.5)
         if frame is None:
@@ -151,6 +152,9 @@ def asr_worker(cfg, capture, ja_queue, preview_queue, status, stop):
             continue
         asr_ms = (time.monotonic() - t0) * 1000
         if text and not is_hallucination(text):
+            if text == last_text:
+                continue   # 连续相同输出多为噪音幻觉, 去重
+            last_text = text
             print(f"[计时] 音频{len(chunk)/16000:.1f}s 识别{asr_ms:.0f}ms | {text}")
             preview_queue.put(text)       # 立即预览日语原文, 降低体感延迟
             ja_queue.put(text)

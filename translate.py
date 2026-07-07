@@ -28,7 +28,12 @@ SYSTEM_PROMPT = (
 _META_MARKERS = ("可以翻译为", "翻译为“", "最终答案", "请提供更多", "如果需要",
                  "根据你的", "更符合", "语境", "直译", "意译", "这句话的意思",
                  "更合理", "建议采用", "上下文", "完整句子", "识别错误",
-                 "备选", "译法", "根据输入", "原文可能")
+                 "备选", "译法", "根据输入", "原文可能",
+                 "原文有误", "一般性回应", "表述方式", "最终译文", "直接翻译")
+
+# 括号内出现这些词 => 整个括号是模型的注释, 删除
+_PAREN_META = ("注", "原文", "语境", "推测", "含义", "回应", "翻译", "译文",
+               "口语化", "不明确")
 
 
 class OllamaTranslator:
@@ -146,7 +151,12 @@ class OllamaTranslator:
         if not zh:
             return zh
         zh = re.split(r"\n\s*\n", zh, maxsplit=1)[0].strip()
-        # 括号整行注释 (如 "(此处可能需要结合上下文…)" ) 直接删行
+        # 行内括号注释 (如 "(注: 原文有误…此处给出一般性回应)") 整段删除
+        def _drop_paren(m):
+            return "" if any(k in m.group(0) for k in _PAREN_META) \
+                else m.group(0)
+        zh = re.sub(r"[((][^))]{0,150}[))]", _drop_paren, zh).strip()
+        # 括号整行注释直接删行
         lines = [ln for ln in zh.splitlines()
                  if not re.match(r"^\s*[((].*[))]\s*$", ln)]
         zh = "\n".join(lines).strip()
@@ -154,6 +164,10 @@ class OllamaTranslator:
                       and len(zh) > max(24, len(ja) * 2))
         if not suspicious:
             return zh
+        # 模型明说了"最终译文" => 直接取其后内容
+        m = re.search(r"最终译文[::]?\s*(.+)$", zh, re.S)
+        if m:
+            return m.group(1).strip().strip('“”"「」')
         # 优先取最后一段引号内的内容(模型通常把最终译文放引号里)
         quoted = re.findall(r'[“"「]([^”"」]{2,})[”"」]', zh)
         if quoted:
