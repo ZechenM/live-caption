@@ -64,9 +64,6 @@ class _RootView(AppKit.NSView):
     def mouseDragged_(self, event):
         self._owner._mouse_dragged(event)
 
-    def mouseMoved_(self, event):
-        self._owner._mouse_moved(event)
-
     def rightMouseDown_(self, _event):
         self._owner._quit()
 
@@ -127,13 +124,8 @@ class SubtitleOverlay:
             NSMakeRect(0, 0, width, height))
         content._owner = self
         self.panel.setContentView_(content)
-        # 追踪鼠标移动以更新边缘光标 (ActiveAlways: 非激活状态也生效)
-        ta = AppKit.NSTrackingArea.alloc().initWithRect_options_owner_userInfo_(
-            content.bounds(),
-            0x02 | 0x80 | 0x200,   # MouseMoved | ActiveAlways | InVisibleRect
-            content, None)
-        content.addTrackingArea_(ta)
         self._edges = ""
+        self._cursor_edges = None
         cb = content.bounds()
 
         # 日语预览行 (顶部)
@@ -200,18 +192,40 @@ class SubtitleOverlay:
 
     def _hit_edges(self, p):
         """p: 窗口内坐标 (原点左下)。返回 t/b/l/r 组合, "" = 中部(移动)。"""
+        return self._hit_edges_xy(p.x, p.y)
+
+    def _hit_edges_xy(self, px, py):
         s = self.panel.frame().size
         m = RESIZE_MARGIN
         e = ""
-        if p.y >= s.height - m:
+        if py >= s.height - m:
             e += "t"
-        elif p.y <= m:
+        elif py <= m:
             e += "b"
-        if p.x <= m:
+        if px <= m:
             e += "l"
-        elif p.x >= s.width - m:
+        elif px >= s.width - m:
             e += "r"
         return e
+
+    def _update_cursor(self):
+        """非激活面板收不到 mouseMoved, 用定时轮询鼠标位置来设置光标。"""
+        NSEvent = AppKit.NSEvent
+        # 正在拖边缩放时保持缩放光标不变
+        if NSEvent.pressedMouseButtons() & 1 and self._edges:
+            return
+        p = NSEvent.mouseLocation()
+        f = self.panel.frame()
+        inside = (f.origin.x <= p.x <= f.origin.x + f.size.width
+                  and f.origin.y <= p.y <= f.origin.y + f.size.height)
+        if not inside:
+            if self._cursor_edges is not None:
+                self._cursor_edges = None   # 离开窗口, 不再干预光标
+            return
+        e = self._hit_edges_xy(p.x - f.origin.x, p.y - f.origin.y)
+        if e != self._cursor_edges:
+            self._cursor_edges = e
+            self._cursor_for(e).set()
 
     def _mouse_down(self, event):
         self._edges = self._hit_edges(event.locationInWindow())
@@ -242,10 +256,6 @@ class SubtitleOverlay:
             h = max(MIN_H, h0 - dy)
             y += h0 - h
         self.panel.setFrame_display_(NSMakeRect(x, y, w, h), True)
-
-    def _mouse_moved(self, event):
-        e = self._hit_edges(event.locationInWindow())
-        self._cursor_for(e).set()
 
     @staticmethod
     def _cursor_for(e):
@@ -335,8 +345,11 @@ class SubtitleOverlay:
             NSApp().terminate_(None)
 
     def run(self, poll_fn, interval_ms=100):
-        self._ticker = _Ticker.alloc().initWithCallback_(
-            lambda: poll_fn(self))
+        def tick():
+            poll_fn(self)
+            self._update_cursor()
+
+        self._ticker = _Ticker.alloc().initWithCallback_(tick)
         NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
             interval_ms / 1000.0, self._ticker, "tick:", None, True)
         signal.signal(signal.SIGINT, lambda *_: self._quit())
