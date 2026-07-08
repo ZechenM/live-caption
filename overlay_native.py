@@ -126,9 +126,9 @@ class SubtitleOverlay:
         self.scroll = NSScrollView.alloc().initWithFrame_(NSMakeRect(
             10, 6, cb.size.width - 20, cb.size.height - ja_h - 10))
         self.scroll.setAutoresizingMask_(2 | 16)        # 宽高都可变
-        self.scroll.setHasVerticalScroller_(True)
-        self.scroll.setScrollerStyle_(1)                # overlay 式滚动条
-        self.scroll.setAutohidesScrollers_(True)        # 平时隐藏, 滚动时出现
+        # 不显示滚动条 (系统"始终显示滚动条"设置会强制 legacy 样式赖在屏上);
+        # 触控板/滚轮滚动不受影响
+        self.scroll.setHasVerticalScroller_(False)
         self.scroll.setDrawsBackground_(False)
 
         inner = self.scroll.contentView().bounds()
