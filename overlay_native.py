@@ -16,7 +16,7 @@ import signal
 import objc
 import AppKit
 from AppKit import (NSApp, NSApplication, NSBackingStoreBuffered,
-                    NSClickGestureRecognizer, NSColor, NSFont,
+                    NSColor, NSFont,
                     NSFontAttributeName, NSForegroundColorAttributeName,
                     NSPanel, NSParagraphStyleAttributeName, NSScreen,
                     NSScrollView, NSTextField, NSTextView)
@@ -35,6 +35,7 @@ LEVEL_OVERLAY = 101          # NSPopUpMenuWindowLevel, 高于全屏内容
 ALIGN_CENTER = getattr(AppKit, "NSTextAlignmentCenter", 1)
 MIN_W, MIN_H = 320, 80
 FOLLOW_MARGIN = 150          # 距底部多少像素内仍视为"在底部"(须大于一行字幕高)
+RESIZE_MARGIN = 14           # 边缘多少像素内判定为"调整大小"
 
 
 class _Ticker(NSObject):
@@ -54,18 +55,33 @@ class _Ticker(NSObject):
             print(f"[overlay] poll error: {e}")
 
 
-class _DragTextView(NSTextView):
-    """左键拖动窗口、右键退出的只读文本视图。"""
+class _RootView(AppKit.NSView):
+    """内容根视图: 把鼠标事件交给 SubtitleOverlay 统一处理。"""
 
     def mouseDown_(self, event):
-        w = self.window()
-        if w is not None:
-            w.performWindowDragWithEvent_(event)
+        self._owner._mouse_down(event)
+
+    def mouseDragged_(self, event):
+        self._owner._mouse_dragged(event)
+
+    def mouseMoved_(self, event):
+        self._owner._mouse_moved(event)
 
     def rightMouseDown_(self, _event):
-        owner = getattr(self, "_owner", None)
-        if owner is not None:
-            owner._quit()
+        self._owner._quit()
+
+
+class _DragTextView(NSTextView):
+    """只读文本视图: 鼠标事件同样交给 SubtitleOverlay。"""
+
+    def mouseDown_(self, event):
+        self._owner._mouse_down(event)
+
+    def mouseDragged_(self, event):
+        self._owner._mouse_dragged(event)
+
+    def rightMouseDown_(self, _event):
+        self._owner._quit()
 
 
 class SubtitleOverlay:
@@ -102,10 +118,22 @@ class SubtitleOverlay:
         self.panel.setHidesOnDeactivate_(False)
         self.panel.setFloatingPanel_(True)
         self.panel.setBecomesKeyOnlyIfNeeded_(True)
-        self.panel.setMovableByWindowBackground_(True)
+        # 移动/缩放全部手动处理 (movableByWindowBackground 会抢占边缘缩放区)
+        self.panel.setMovableByWindowBackground_(False)
+        self.panel.setAcceptsMouseMovedEvents_(True)
         self.panel.setMinSize_(NSMakeSize(MIN_W, MIN_H))
 
-        content = self.panel.contentView()
+        content = _RootView.alloc().initWithFrame_(
+            NSMakeRect(0, 0, width, height))
+        content._owner = self
+        self.panel.setContentView_(content)
+        # 追踪鼠标移动以更新边缘光标 (ActiveAlways: 非激活状态也生效)
+        ta = AppKit.NSTrackingArea.alloc().initWithRect_options_owner_userInfo_(
+            content.bounds(),
+            0x02 | 0x80 | 0x200,   # MouseMoved | ActiveAlways | InVisibleRect
+            content, None)
+        content.addTrackingArea_(ta)
+        self._edges = ""
         cb = content.bounds()
 
         # 日语预览行 (顶部)
@@ -146,11 +174,6 @@ class SubtitleOverlay:
         self.scroll.setDocumentView_(self.tv)
         content.addSubview_(self.scroll)
 
-        # 右键(文本区之外的部分)也能退出
-        gr = NSClickGestureRecognizer.alloc().initWithTarget_action_(
-            _Ticker.alloc().initWithCallback_(self._quit), "tick:")
-        gr.setButtonMask_(0x2)
-        content.addGestureRecognizer_(gr)
 
         # 文本样式
         self._para = NSMutableParagraphStyle.alloc().init()
@@ -172,6 +195,72 @@ class SubtitleOverlay:
     def _font(family, size):
         f = NSFont.fontWithName_size_(family, size)
         return f if f is not None else NSFont.systemFontOfSize_(size)
+
+    # ---------- 拖动 / 缩放 / 光标 ----------
+
+    def _hit_edges(self, p):
+        """p: 窗口内坐标 (原点左下)。返回 t/b/l/r 组合, "" = 中部(移动)。"""
+        s = self.panel.frame().size
+        m = RESIZE_MARGIN
+        e = ""
+        if p.y >= s.height - m:
+            e += "t"
+        elif p.y <= m:
+            e += "b"
+        if p.x <= m:
+            e += "l"
+        elif p.x >= s.width - m:
+            e += "r"
+        return e
+
+    def _mouse_down(self, event):
+        self._edges = self._hit_edges(event.locationInWindow())
+        if not self._edges:
+            self.panel.performWindowDragWithEvent_(event)   # 原生移动
+            return
+        self._f0 = self.panel.frame()
+        self._m0 = AppKit.NSEvent.mouseLocation()
+
+    def _mouse_dragged(self, _event):
+        e = self._edges
+        if not e:
+            return
+        cur = AppKit.NSEvent.mouseLocation()
+        dx = cur.x - self._m0.x
+        dy = cur.y - self._m0.y
+        x, y = self._f0.origin.x, self._f0.origin.y
+        w0, h0 = self._f0.size.width, self._f0.size.height
+        w, h = w0, h0
+        if "r" in e:
+            w = max(MIN_W, w0 + dx)
+        if "l" in e:
+            w = max(MIN_W, w0 - dx)
+            x += w0 - w
+        if "t" in e:                       # mac 坐标 y 向上, 顶边 = 高 y
+            h = max(MIN_H, h0 + dy)
+        if "b" in e:
+            h = max(MIN_H, h0 - dy)
+            y += h0 - h
+        self.panel.setFrame_display_(NSMakeRect(x, y, w, h), True)
+
+    def _mouse_moved(self, event):
+        e = self._hit_edges(event.locationInWindow())
+        self._cursor_for(e).set()
+
+    @staticmethod
+    def _cursor_for(e):
+        NSCursor = AppKit.NSCursor
+        if e in ("l", "r"):
+            return NSCursor.resizeLeftRightCursor()
+        if e in ("t", "b"):
+            return NSCursor.resizeUpDownCursor()
+        if e in ("tl", "br"):              # 对角双向箭头是私有光标, 尽力取
+            f = getattr(NSCursor, "_windowResizeNorthWestSouthEastCursor", None)
+            return f() if callable(f) else NSCursor.crosshairCursor()
+        if e in ("tr", "bl"):
+            f = getattr(NSCursor, "_windowResizeNorthEastSouthWestCursor", None)
+            return f() if callable(f) else NSCursor.crosshairCursor()
+        return NSCursor.arrowCursor()
 
     # ---------- 渲染 ----------
 
