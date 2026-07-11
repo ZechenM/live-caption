@@ -56,7 +56,29 @@ class _Ticker(NSObject):
 
 
 class _RootView(AppKit.NSView):
-    """内容根视图: 把鼠标事件交给 SubtitleOverlay 统一处理。"""
+    """内容根视图: 把鼠标事件交给 SubtitleOverlay 统一处理。
+
+    鼠标靠近边缘时高亮该边 (后台应用无法改变系统光标,
+    光标样式由前台应用控制, 只能用视觉高亮提示缩放区)。
+    """
+
+    def drawRect_(self, _rect):
+        owner = getattr(self, "_owner", None)
+        e = getattr(owner, "_cursor_edges", None) or ""
+        if not e:
+            return
+        AppKit.NSColor.colorWithWhite_alpha_(1.0, 0.45).set()
+        b = self.bounds()
+        w, h, m = b.size.width, b.size.height, 3.0
+        P = AppKit.NSBezierPath
+        if "t" in e:
+            P.fillRect_(NSMakeRect(0, h - m, w, m))
+        if "b" in e:
+            P.fillRect_(NSMakeRect(0, 0, w, m))
+        if "l" in e:
+            P.fillRect_(NSMakeRect(0, 0, m, h))
+        if "r" in e:
+            P.fillRect_(NSMakeRect(w - m, 0, m, h))
 
     def mouseDown_(self, event):
         self._owner._mouse_down(event)
@@ -209,23 +231,26 @@ class SubtitleOverlay:
         return e
 
     def _update_cursor(self):
-        """非激活面板收不到 mouseMoved, 用定时轮询鼠标位置来设置光标。"""
+        """轮询鼠标位置: 更新边缘高亮 + 尽力设置光标。
+
+        注意: 光标样式由前台应用控制, 我们是后台面板, NSCursor 大概率
+        无效(保留调用, 万一本应用恰好活跃时仍有效); 主要反馈靠边缘高亮。
+        """
         NSEvent = AppKit.NSEvent
-        # 正在拖边缩放时保持缩放光标不变
+        # 正在拖边缩放时保持状态不变
         if NSEvent.pressedMouseButtons() & 1 and self._edges:
             return
         p = NSEvent.mouseLocation()
         f = self.panel.frame()
         inside = (f.origin.x <= p.x <= f.origin.x + f.size.width
                   and f.origin.y <= p.y <= f.origin.y + f.size.height)
-        if not inside:
-            if self._cursor_edges is not None:
-                self._cursor_edges = None   # 离开窗口, 不再干预光标
-            return
-        e = self._hit_edges_xy(p.x - f.origin.x, p.y - f.origin.y)
+        e = self._hit_edges_xy(p.x - f.origin.x, p.y - f.origin.y) \
+            if inside else None
         if e != self._cursor_edges:
             self._cursor_edges = e
-            self._cursor_for(e).set()
+            self.panel.contentView().setNeedsDisplay_(True)   # 重画边缘高亮
+            if e is not None:
+                self._cursor_for(e).set()
 
     def _mouse_down(self, event):
         self._edges = self._hit_edges(event.locationInWindow())
