@@ -25,15 +25,21 @@ default_multi() {
 
 # 在 config.yaml 的 device_map 里查当前设备对应的 Multi-Output 名称。
 # device_map 的条目格式必须是:  "设备名": "Multi-Output名"
+# 先精确匹配, 不中再做子串匹配 (忽略大小写, 如 "AirPods" 匹配 "xx's AirPods Pro")
 map_lookup() {
   local target="$1"
-  sed -nE 's/^[[:space:]]+"(.+)"[[:space:]]*:[[:space:]]*"(.+)".*/\1\t\2/p' "${DIR}/config.yaml" \
-    | while IFS=$'\t' read -r k v; do
-        if [[ "${k}" == "${target}" ]]; then
-          echo "${v}"
-          return
-        fi
-      done
+  local pairs
+  pairs="$(sed -nE 's/^[[:space:]]+"(.+)"[[:space:]]*:[[:space:]]*"(.+)".*/\1\t\2/p' "${DIR}/config.yaml")"
+  local hit
+  hit="$(printf '%s\n' "${pairs}" | while IFS=$'\t' read -r k v; do
+      if [[ "${k}" == "${target}" ]]; then echo "${v}"; break; fi
+    done)"
+  if [[ -n "${hit}" ]]; then echo "${hit}"; return; fi
+  shopt -s nocasematch
+  printf '%s\n' "${pairs}" | while IFS=$'\t' read -r k v; do
+      if [[ "${target}" == *"${k}"* ]]; then echo "${v}"; break; fi
+    done
+  shopt -u nocasematch
 }
 
 switch_on() {

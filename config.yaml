@@ -45,6 +45,9 @@ overlay:
 audio_switch:
   multi_output_name: "Openfit-BH"   # 找不到映射时的默认设备名
   # 自动映射: 运行 setup_audio.sh 时, 当前输出是左边的设备, 就自动切到右边的 Multi-Output
+  # 匹配规则: 先精确匹配设备全名; 不中再做子串匹配(忽略大小写),
+  # 所以 "AirPods" 能匹配 "xxx's AirPods Pro" 等任意 AirPods 设备
   device_map:
     "MacBook Pro Speakers": "MBP-BH"
     "OpenFit SE by Shokz": "Openfit-BH"
+    "AirPods": "airpods-BH"
